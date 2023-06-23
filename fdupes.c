@@ -51,6 +51,8 @@
 #include "flags.h"
 #include "removeifnotchanged.h"
 
+int _masterDirVal; // track which command-line-option directory is being processed
+
 long long minsize = -1;
 long long maxsize = -1;
 
@@ -234,6 +236,7 @@ int grokdir(char *dir, file_t **filelistp, struct stat *logfile_status)
       newfile->crcpartial = NULL;
       newfile->duplicates = NULL;
       newfile->hasdupes = 0;
+      newfile->dirVal = _masterDirVal;  // Remember which directory tree
 
       newfile->d_name = (char*)malloc(strlen(dir)+strlen(dirinfo->d_name)+2);
 
@@ -695,30 +698,57 @@ void summarizematches(file_t *files)
   }
 }
 
+/* Is this file and any duplicates from the same directory tree?
+*/
+int areDupesSameDir(file_t *file)
+{
+  int masterVal = file->dirVal;
+  file_t *tmpfile = file->duplicates;
+  while (tmpfile != NULL)
+  {
+    if (tmpfile->dirVal != masterVal)
+      return FALSE;
+    tmpfile = tmpfile->duplicates;
+  }
+  return TRUE;
+}
+
 void printmatches(file_t *files)
 {
   file_t *tmpfile;
 
-  while (files != NULL) {
-    if (files->hasdupes) {
-      if (!ISFLAG(flags, F_OMITFIRST)) {
-	if (ISFLAG(flags, F_SHOWSIZE)) printf("%lld byte%seach:\n", (long long int)files->size,
-	 (files->size != 1) ? "s " : " ");
-        if (ISFLAG(flags, F_SHOWTIME))
-          printf("%s ", fmttime(files->mtime));
-	if (ISFLAG(flags, F_DSAMELINE)) escapefilename("\\ ", &files->d_name);
-	printf("%s%c", files->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+  while (files != NULL) 
+  {
+    if (files->hasdupes) 
+    {
+      if ( ISFLAG(flags, F_NOMATCHINDIR) && areDupesSameDir(files))
+      {
+        ; // don't output within same directory tree
       }
-      tmpfile = files->duplicates;
-      while (tmpfile != NULL) {
-        if (ISFLAG(flags, F_SHOWTIME))
-          printf("%s ", fmttime(tmpfile->mtime));
-	if (ISFLAG(flags, F_DSAMELINE)) escapefilename("\\ ", &tmpfile->d_name);
-	printf("%s%c", tmpfile->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
-	tmpfile = tmpfile->duplicates;
+      else
+      {
+        if (!ISFLAG(flags, F_OMITFIRST)) 
+        {
+          if (ISFLAG(flags, F_SHOWSIZE)) 
+            printf("%lld byte%seach:\n", (long long int)files->size, (files->size != 1) ? "s " : " ");
+          if (ISFLAG(flags, F_SHOWTIME))
+            printf("%s ", fmttime(files->mtime));
+          if (ISFLAG(flags, F_DSAMELINE)) 
+          escapefilename("\\ ", &files->d_name);
+          printf("%s%c", files->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+        }
+        tmpfile = files->duplicates;
+        while (tmpfile != NULL) 
+        {
+          if (ISFLAG(flags, F_SHOWTIME))
+            printf("%s ", fmttime(tmpfile->mtime));
+          if (ISFLAG(flags, F_DSAMELINE)) 
+            escapefilename("\\ ", &tmpfile->d_name);
+          printf("%s%c", tmpfile->d_name, ISFLAG(flags, F_DSAMELINE)?' ':'\n');
+          tmpfile = tmpfile->duplicates;
+        }
+        printf("\n");
       }
-      printf("\n");
-
     }
       
     files = files->next;
@@ -1292,6 +1322,7 @@ int main(int argc, char **argv) {
     { "reverse", 0, 0, 'i' },
     { "log", 1, 0, 'l' },
     { "deferconfirmation", 0, 0, 'D' },
+    { "matchonlyacrossdirs", 0, 0, 'M' },  // ignore duplicates within the same directory tree
     { 0, 0, 0, 0 }
   };
 #define GETOPT getopt_long
@@ -1305,7 +1336,7 @@ int main(int argc, char **argv) {
 
   oldargv = cloneargs(argc, argv);
 
-  while ((opt = GETOPT(argc, argv, "frRq1StsHG:L:nAdPvhNImpo:il:D"
+  while ((opt = GETOPT(argc, argv, "frRq1StsHG:L:nAdPvhNImpo:il:DM"
 #ifdef HAVE_GETOPT_H
           , long_options, NULL
 #endif
@@ -1405,6 +1436,9 @@ int main(int argc, char **argv) {
     case 'D':
       SETFLAG(flags, F_DEFERCONFIRMATION);
       break;
+    case 'M':
+      SETFLAG(flags, F_NOMATCHINDIR);
+      break;
     default:
       fprintf(stderr, "Try `fdupes --help' for more information.\n");
       exit(1);
@@ -1455,6 +1489,8 @@ int main(int argc, char **argv) {
     }
   }
 
+  _masterDirVal = 1;  // tracking which directory tree is being processed
+
   if (ISFLAG(flags, F_RECURSEAFTER)) {
     firstrecurse = nonoptafter("--recurse:", argc, oldargv, argv, optind);
     
@@ -1468,16 +1504,25 @@ int main(int argc, char **argv) {
 
     /* F_RECURSE is not set for directories before --recurse: */
     for (x = optind; x < firstrecurse; x++)
-      filecount += grokdir(argv[x], &files, logfile ? &logfile_status : 0);
+    {
+       filecount += grokdir(argv[x], &files, logfile ? &logfile_status : 0);
+      _masterDirVal++;
+    }
 
     /* Set F_RECURSE for directories after --recurse: */
     SETFLAG(flags, F_RECURSE);
 
     for (x = firstrecurse; x < argc; x++)
+    {
       filecount += grokdir(argv[x], &files, logfile ? &logfile_status : 0);
+      _masterDirVal++;
+    }
   } else {
     for (x = optind; x < argc; x++)
+    {
       filecount += grokdir(argv[x], &files, logfile ? &logfile_status : 0);
+      _masterDirVal++;
+    }
   }
 
   if (!files) {
@@ -1486,11 +1531,14 @@ int main(int argc, char **argv) {
   }
   
   curfile = files;
+  // Initialize the tree
+  registerfile(&checktree, curfile);
+  curfile = curfile->next;
 
   while (curfile) {
-    if (!checktree) 
-      registerfile(&checktree, curfile);
-    else 
+//    if (!checktree) 
+//      registerfile(&checktree, curfile);
+//    else 
       match = checkmatch(&checktree, checktree, curfile);
 
     if (match != NULL) {

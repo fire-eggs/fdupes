@@ -26,6 +26,7 @@
 #include "md5/md5.h"
 
 typedef struct _file {
+  int dirVal; // indicates which command-line-argument directory this file is in
   char *d_name;
   off_t size;
   md5_byte_t *crcpartial;

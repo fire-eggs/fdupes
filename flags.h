@@ -23,6 +23,7 @@
 #define F_PLAINPROMPT       0x10000
 #define F_SHOWTIME          0x20000
 #define F_DEFERCONFIRMATION 0x40000
+#define F_NOMATCHINDIR      0x80000
 
 extern unsigned long flags;
 
